@@ -102,10 +102,10 @@ case "$stage_run" in
               --updates "${UPDATES:-30000}" --batch-size "${BATCH_SIZE:-8}"
               --width "${WIDTH:-256}" --layers "${LAYERS:-4}"
               --hidden-layers "${HIDDEN_LAYERS:-4}"
-              --sigma-min "${SIGMA_MIN:-0.03}"
+              --sigma-min "${SIGMA_MIN:-0.03}" --cutoff "${CUTOFF:-5.5}"
               --learning-rate "${LEARNING_RATE:-0.0002}"
               --weight-decay "${WEIGHT_DECAY:-5e-8}" --log-every "${LOG_EVERY:-100}")
-        # Unset: sigma-max defaults to 3.0 A (test42 used the cell size, ~13.5 A).
+        # Unset: sigma-max defaults to 8.0 A (test42 used the cell size, ~13.5 A).
         if [[ -n "${SIGMA_MAX:-}" ]]; then args+=(--sigma-max "$SIGMA_MAX"); fi
         ;;
     generate)

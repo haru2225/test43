@@ -118,12 +118,12 @@ python -m pytest -q
 The test suite covers periodic geometry, permutation behavior, score-target
 conventions, gradients, and the prepare/train/generate/evaluate workflow.
 
-## test43 (差分: σ の範囲のみ)
+## test43 (test42 との差分)
 
-test42 との唯一の変更は拡散ノイズの範囲です。
-- `--sigma-max` の既定を 3.0 Å に変更（test42 はセル長 ≈13.5 Å）。
-  参考実装の σ_max=0.2（セル比）≈ 2 Å に合わせ、ほぼ一様分布の領域に学習を費やさない。
-- 「σ_max で一様分布に到達する」検査を削除（σ_max > σ_min のみ検査）。
-- 生成の初期値は従来どおり一様乱数（参考実装と同様）。σ_max=3 Å では終端分布は一様ではないので、
-  生成品質が悪い場合は初期分布（格子ノイズ等）を要検討。
-- チェックポイント形式は `test43-crystal-source-egnn-v1`（test42 のものは不可）。
+- 拡散ノイズ範囲: `--sigma-max` 既定 8.0 Å（test42 はセル長 ≈13.5 Å）。
+  「σ_max で一様分布に到達する」検査は削除し σ_max > σ_min のみ検査。
+  生成の初期値は従来どおり一様乱数。
+- グラフ: 最小イメージ距離 5.5 Å の radial cutoff（`--cutoff`, PBS では `CUTOFF`。0 で全結合）。
+  β-cristobalite の Si–Si 第1殻 ≈3.1 Å、第2殻 ≈5.2 Å を含む。cutoff はチェックポイントに保存される。
+- ノード特徴の σ を `log σ` に変更（test42 は生の σ で、初期状態では出力が σ にほぼ依存しなかった）。
+- チェックポイント形式 `test43-crystal-source-egnn-v2`（test42 のものは不可）。

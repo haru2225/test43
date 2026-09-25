@@ -38,10 +38,11 @@ from torch import nn
 from egnn_vendor import EGNN
 
 FORMAT = "test43-crystal-single-phase-v2"
-CHECKPOINT_FORMAT = "test43-crystal-source-egnn-v1"
+CHECKPOINT_FORMAT = "test43-crystal-source-egnn-v2"
 SI_MASS, O_MASS = 28.0855, 15.9994
 BEAD_MASS = SI_MASS + 2 * O_MASS
-DEFAULT_SIGMA_MAX = 3.0
+DEFAULT_SIGMA_MAX = 8.0
+DEFAULT_CUTOFF = 5.5
 STOP = False
 
 
@@ -211,7 +212,7 @@ def load_dataset(path):
 
 
 def graph(pos, lengths, cutoff=None):
-    """Source EGNN default: directed fully connected graph and minimum-image distances."""
+    """Directed graph on minimum-image distances; fully connected when cutoff is None (source default)."""
     n_atoms = pos.shape[0]
     indices = torch.arange(n_atoms, device=pos.device)
     src = indices.repeat_interleave(n_atoms)
@@ -221,6 +222,9 @@ def graph(pos, lengths, cutoff=None):
     box = pos.new_tensor(lengths)
     delta = pos[dst] - pos[src]
     delta = delta - torch.round(delta / box) * box
+    if cutoff is not None:
+        near = delta.norm(dim=-1) < cutoff
+        src, dst, delta = src[near], dst[near], delta[near]
     return src, dst, delta
 
 
@@ -237,8 +241,9 @@ class Score(nn.Module):
     configuration-template EGNN widths/depth. Output uses the source's
     sigma-normalized score convention.
     """
-    def __init__(self, width=256, layers=4, hidden_layers=4, cutoff=None, bloch_shells=1):
+    def __init__(self, width=256, layers=4, hidden_layers=4, cutoff=DEFAULT_CUTOFF, bloch_shells=1):
         super().__init__()
+        self.cutoff = cutoff  # Angstrom, minimum-image graph cutoff; None = fully connected
         if bloch_shells != 1:
             raise ValueError("Source-compatible EGNN uses the first cubic Bloch shell")
         self.spatial_dimension = 3
@@ -272,7 +277,7 @@ class Score(nn.Module):
         src, dst, displacement = edges
         fractional = (pos / pos.new_tensor(lengths)) % 1.0
         z = self.uplift(fractional)
-        sigma_features = pos.new_full((len(types), 1), sigma)
+        sigma_features = pos.new_full((len(types), 1), math.log(sigma))  # log sigma feature (test43)
         # test43 has one unmasked bead species; source layout is [sigma, one-hot(type+MASK)].
         atom_type_features = pos.new_zeros((len(types), self.num_atom_types + 1))
         atom_type_features[:, 0] = 1.0
@@ -319,7 +324,8 @@ def device_for(name):
 def train(args):
     arrays, meta = load_dataset(args.dataset)
     device = device_for(args.device)
-    config = dict(width=args.width, layers=args.layers, hidden_layers=args.hidden_layers)
+    config = dict(width=args.width, layers=args.layers, hidden_layers=args.hidden_layers,
+                  cutoff=args.cutoff or None)
     maximum = max(max(cell) for cell in meta["lengths"])
     # test43: sigma-max defaults to DEFAULT_SIGMA_MAX (Angstrom), not the cell size, so training
     # does not spend most steps on the near-uniform regime. The terminal distribution is therefore
@@ -363,7 +369,7 @@ def train(args):
         box = clean.new_tensor(lengths)
         noisy = (clean + sigma * torch.randn_like(clean)) % box
         types = torch.tensor(np.asarray(meta["numbers"]) == 14, device=device).long()
-        pred = model(types, noisy, graph(noisy, lengths), sigma, lengths)
+        pred = model(types, noisy, graph(noisy, lengths, model.cutoff), sigma, lengths)
         target = wrapped_target(noisy, clean, box, sigma)
         return (pred - target).square().mean(), target.square().mean()
 
@@ -412,7 +418,7 @@ def train(args):
 def generate(args):
     ck = load_pt(args.checkpoint)
     if ck.get("format") != CHECKPOINT_FORMAT:
-        raise ValueError("A source-compatible test43 EGNN v1 checkpoint is required; start a new run for changed optimizer settings")
+        raise ValueError("A source-compatible test43 EGNN v2 checkpoint is required; start a new run for changed optimizer settings")
     device = device_for(args.device)
     config = ck["settings"]["architecture"]
     model = Score(**config).to(device)
@@ -457,7 +463,7 @@ def generate(args):
             return 75
         sigma = float(levels[step])
         dv = float(levels[step]**2 - levels[step + 1]**2)
-        pred = model(types, pos, graph(pos, lengths), sigma, lengths)
+        pred = model(types, pos, graph(pos, lengths, model.cutoff), sigma, lengths)
         pos = (pos + dv / sigma * pred + math.sqrt(dv) * torch.randn_like(pos)) % box
         if not torch.isfinite(pos).all():
             raise RuntimeError("Non-finite sample")
@@ -559,6 +565,13 @@ def positive(text):
     return value
 
 
+def nonnegative(text):
+    value = float(text)
+    if not math.isfinite(value) or value < 0:
+        raise argparse.ArgumentTypeError("Must be finite and nonnegative")
+    return value
+
+
 def count(text):
     value = int(text)
     if value < 1:
@@ -589,7 +602,7 @@ def parser():
     tr.add_argument("--width", type=count, default=256)
     tr.add_argument("--layers", type=count, default=4)
     tr.add_argument("--hidden-layers", type=count, default=4)
-    tr.add_argument("--cutoff", type=positive, help=argparse.SUPPRESS)
+    tr.add_argument("--cutoff", type=nonnegative, default=DEFAULT_CUTOFF, help="Graph cutoff, Angstrom (minimum-image); 0 = fully connected")
     tr.add_argument("--sigma-min", type=positive, default=0.03)
     tr.add_argument("--sigma-max", type=positive)
     tr.add_argument("--learning-rate", type=positive, default=2e-4)
